@@ -114,6 +114,9 @@ EXAMPLES:
 ;; (format nil "~-2/ts:sub/" "abcdef")
 ;;
 
+;; note: see FORMATTER and functions as format-control
+;; also, (format nil "~?" (formatter "~R") '(5))
+
 (defun compose (stream data *colonp* *atsignp* formats)
   (flet ((process (format value) (format nil format value)))
     (write-string (reduce #'process formats :from-end t :initial-value data)
