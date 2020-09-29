@@ -2,7 +2,8 @@
   (:nicknames ts)
   (:use :cl)
   (:import-from #:alexandria
-                alexandria:once-only)
+                alexandria:once-only
+                alexandria:ensure-list)
   (:export #:fmt
            #:sub
            #:compose
@@ -96,11 +97,15 @@ EXAMPLES:
 
 (defmacro with-indices ((&rest indices) string &body body)
   (once-only (string)
-    `(let ,(mapcar (lambda (name) `(,name (index ,string ,name))) indices)
-       ,@body)))
+    (flet ((binding (index)
+             (destructuring-bind (name &optional default) (ensure-list index)
+               (let ((index-expr (if default `(or ,name ,default) name)))
+                 `(,name (index ,string ,index-expr))))))
+      `(let ,(mapcar #'binding indices)
+         ,@body))))
 
-(defun sub (stream string *colonp* *atsignp* &optional (start 0) end)
-  (with-indices (start end) string
+(defun sub (stream string *colonp* *atsignp* &optional start end)
+  (with-indices ((start 0) end) string
     (when (< start end)
       (write-string string stream :start start :end end))))
 
@@ -110,8 +115,9 @@ EXAMPLES:
 ;;           0 5 in
 ;;           10 15 in))
 ;;
-;; (format nil "~2/ts:sub/" "abcdef")
-;; (format nil "~-2/ts:sub/" "abcdef")
+;; (equal (format nil "~2/ts:sub/" "abcdef") "cdef")
+;; (equal (format nil "~-2/ts:sub/" "abcdef") "ef")
+;; (equal (format nil "~,-1/ts:sub/" "abcdefgh") "abcdefg")
 ;;
 
 ;; note: see FORMATTER and functions as format-control
