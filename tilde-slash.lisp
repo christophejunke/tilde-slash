@@ -158,15 +158,15 @@ EXAMPLES:
                             (slice string (+ sep cut)))))))))
 
 (defun fit (stream string colonp atsignp &optional total-size (cut-point :end))
-  "FORMAT control format for FIT function."
+  "FORMAT control format for FIT-STRING function."
   (assert total-size (total-size) "Size argument is mandatory")
-  (princ (fit string
-              total-size
-              :cut-at (etypecase cut-point
-                        (symbol cut-point)
-                        ((real 0 1) cut-point)
-                        ((integer 0 100) (/ cut-point 100)))
-              :padding (unless colonp (if atsignp :left :right)))
+  (princ (fit-string string
+                     total-size
+                     :cut-at (etypecase cut-point
+                               (symbol cut-point)
+                               ((real 0 1) cut-point)
+                               ((integer 0 100) (/ cut-point 100)))
+                     :padding (unless colonp (if atsignp :left :right)))
          stream))
 
 
