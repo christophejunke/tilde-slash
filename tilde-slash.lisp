@@ -1,16 +1,19 @@
 (defpackage #:tilde-slash
   (:nicknames ts)
   (:use :cl)
+  (:import-from #:str
+                str:with-indices)
   (:import-from #:alexandria
                 alexandria:once-only
                 alexandria:ensure-list)
-  (:export #:fmt
-           #:sub
-           #:compose
+  (:export #:sub
+           #:fun
+           #:rec
+           #:pos
+           #:var
+           #:fit
+           #:rep
 
-           #:slice
-           #:index
-           #:with-indices
            #:*colonp*
            #:*atsignp*))
 
@@ -19,9 +22,24 @@
 (defvar *colonp*)
 (defvar *atsignp*)
 
-(defvar *sharedp* t)
+(defvar *ellipsis* "…")
 
-(defun fn (*standard-output* data *colonp* *atsignp* function &rest args)
+(defgeneric store-position (item position)
+  (:method ((v vector) p)
+    (vector-push-extend p v (length v)))
+  (:method ((f function) p)
+    (funcall f p)))
+
+(defun rep (stream data *colonp* *atsignp* count)
+  (loop repeat count do (princ data stream)))
+
+(defun pos (stream target *colonp* *atsignp*)
+  (store-position target (file-position stream)))
+
+(defmacro var (s &aux (p (gensym)))
+  `(lambda (,p) (setf ,s ,p)))
+
+(defun fun (*standard-output* data *colonp* *atsignp* function &rest args)
   "Format DATA using FUNCTION
 
 Apply FUNCTION with DATA and ARGS in a dynamic context where *STANDARD-OUTPUT*
@@ -33,7 +51,7 @@ For example:
   (use-package :local-time)
 
   (format nil
-          \"~v@/ts:fn/\"
+          \"~v@/ts:fun/\"
           (lambda (date)
             (let ((format (cond
                             ((and *atsignp* *colonp*) +iso-week-date-format+)
@@ -45,67 +63,8 @@ For example:
 "
   (apply function data args))
 
-(declaim (inline index))
-
-(defun index (string pos)
-  "Modular/saturating position in string.
-
-Returns an index between 0 and (LENGTH STRING), inclusive.
-
-If POS is NIL, the returned value is the length of STRING,
-to be consistent with exclusive end indices.
-
-Otherwise POS must be an integer.
-
-If POS is positive, it is clamped to be at most the length
-of the string.
-
-If POS is negative and its magnitude is lower than the
-length of string, the returned index is meant to represent
-an offset from the end.
-
-Otherwise, if POS is negative and its magnitude is greater
-than the length, the returned index is 0.
-
-EXAMPLES:
-
-   (flet ((is (pos res) (assert (= (index \"abcde\" pos) res))))
-     ;; nil case
-     (is nil  5)
-
-     ;; positive
-     (is 3  3)
-     (is 4  4)
-     (is 5  5)
-     (is 10 5)
-
-     ;; negative
-     (is -1   4)
-     (is -2   3)
-     (is -3   2)
-     (is -4   1)
-     (is -5   0)
-     (is -10  0))
-  "
-  (check-type pos (or null integer))
-  (with-accessors ((length length)) string
-    (cond
-      ((not pos) length)
-      ((>= pos 0) (min pos length))
-      ((< (abs pos) length) (+ length pos))
-      (t 0))))
-
-(defmacro with-indices ((&rest indices) string &body body)
-  (once-only (string)
-    (flet ((binding (index)
-             (destructuring-bind (name &optional default) (ensure-list index)
-               (let ((index-expr (if default `(or ,name ,default) name)))
-                 `(,name (index ,string ,index-expr))))))
-      `(let ,(mapcar #'binding indices)
-         ,@body))))
-
 (defun sub (stream string *colonp* *atsignp* &optional start end)
-  (with-indices ((start 0) end) string
+  (with-indices ((start (or start 0)) end) string
     (when (< start end)
       (write-string string stream :start start :end end))))
 
@@ -123,13 +82,13 @@ EXAMPLES:
 ;; note: see FORMATTER and functions as format-control
 ;; also, (format nil "~?" (formatter "~R") '(5))
 
-(defun compose (stream data *colonp* *atsignp* formats)
+(defun chain (stream data *colonp* *atsignp* formats)
   (flet ((process (format value) (format nil format value)))
     (write-string (reduce #'process formats :from-end t :initial-value data)
                   stream)))
 
 ;; (string= (format nil
-;;                  "~v/ts:compose/"
+;;                  "~v/ts:chain/"
 ;;                  '("~20a" "~@:(~r~)")
 ;;                  35)
 ;;          "THIRTY-FIVE         ")
@@ -137,45 +96,50 @@ EXAMPLES:
 ;; fixme: just compute the indices and write the substrings
 ;; fixme: do not pad here, just truncate
 
-(defun fit-string (string total-size &key (cut-at :end) (padding :right))
-  "Pad or truncate STRING to TOTAL-SIZE."
-  (check-type cut-at (or (real 0.0 1.0) (member :start :middle :end)))
-  (check-type padding (or null (member :left :right)))
-  (let* ((ellipsis "..." ;; str::*ellipsis*
-                   )
+(defvar *default-cut* :end)
+
+(defun fit (stream object *colonp* *atsignp* 
+            &optional 
+              total-size 
+              cut-at 
+              ellipsis
+              padding-char)
+  "FORMAT control format for FIT-STRING function."
+  (assert total-size (total-size) "Size argument is mandatory")
+  (let* ((string (if *colonp*
+                     (with-output-to-string (out)
+                       (write object :stream out :escape t :readably t))
+                     object))
+         (ellipsis (string (or ellipsis *ellipsis*)))
+         (cut-at (etypecase cut-at
+                   (symbol (or cut-at *default-cut*))
+                   ((real 0 1) cut-at)
+                   ((integer 0 100) (/ cut-at 100))))
+         (padding (if *atsignp* :left :right))
+         (padding-char (or padding-char #\space))
          (ssize (length string))
          (esize (length ellipsis))
+         (extra (- total-size ssize))
          (ratio (case cut-at
                   (:end 1)
                   (:start 0)
                   (:middle 1/2)
                   (t cut-at))))
-    (format nil
-            "~[~*~a~;~v@a~;~va~]"
-            (position padding '(nil :left :right))
-            total-size
-            (if (<= ssize total-size)
-                string
-                (let* ((keep (max 0 (- total-size esize)))
-                       (cut (- ssize keep))
-                       (sep (round (* keep ratio))))
-                  (let ((*sharedp* t))
-                    (format nil
-                            "~a~a~a"
-                            (slice string 0 sep)
-                            ellipsis
-                            (slice string (+ sep cut)))))))))
-
-(defun fit (stream string colonp atsignp &optional total-size (cut-point :end))
-  "FORMAT control format for FIT-STRING function."
-  (assert total-size (total-size) "Size argument is mandatory")
-  (princ (fit-string string
-                     total-size
-                     :cut-at (etypecase cut-point
-                               (symbol cut-point)
-                               ((real 0 1) cut-point)
-                               ((integer 0 100) (/ cut-point 100)))
-                     :padding (unless colonp (if atsignp :left :right)))
-         stream))
+    (if (<= 0 extra)
+        (case padding
+          (:left
+           (format stream "~v/ts:rep/~a" extra padding-char string))
+          (:right
+           (format stream "~a~v/ts:rep/" string extra padding-char))
+          (t
+           (write-string string stream)))
+        (let* ((keep (max 0 (- total-size esize)))
+               (cut (- ssize keep))
+               (sep (round (* keep ratio))))
+          (format stream
+                  "~v,v/ts:sub/~a~v/ts:sub/"
+                  0 sep string 
+                  ellipsis
+                  (+ sep cut) string)))))
 
 
