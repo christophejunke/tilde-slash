@@ -30,7 +30,7 @@
   (:method ((f function) p)
     (funcall f p)))
 
-(defun rep (stream data *colonp* *atsignp* count)
+(defun rep (stream count *colonp* *atsignp* &optional (data #\space))
   (loop repeat count do (princ data stream)))
 
 (defun pos (stream target *colonp* *atsignp*)
@@ -98,12 +98,13 @@ For example:
 
 (defvar *default-cut* :end)
 
-(defun fit (stream object *colonp* *atsignp* 
-            &optional 
-              total-size 
-              cut-at 
-              ellipsis
-              padding-char)
+(defun fit (stream object *colonp* *atsignp*
+            &optional
+              total-size
+              padding-pos
+              cut-at
+              padding-char
+              ellipsis)
   "FORMAT control format for FIT-STRING function."
   (assert total-size (total-size) "Size argument is mandatory")
   (let* ((string (if *colonp*
@@ -115,7 +116,6 @@ For example:
                    (symbol (or cut-at *default-cut*))
                    ((real 0 1) cut-at)
                    ((integer 0 100) (/ cut-at 100))))
-         (padding (if *atsignp* :left :right))
          (padding-char (or padding-char #\space))
          (ssize (length string))
          (esize (length ellipsis))
@@ -126,20 +126,31 @@ For example:
                   (:middle 1/2)
                   (t cut-at))))
     (if (<= 0 extra)
-        (case padding
-          (:left
-           (format stream "~v/ts:rep/~a" extra padding-char string))
-          (:right
-           (format stream "~a~v/ts:rep/" string extra padding-char))
-          (t
-           (write-string string stream)))
+        (multiple-value-bind (left right) (case padding-pos
+                                            (:left (values extra 0))
+                                            (:right (values 0 extra))
+                                            (t (values 0 0)))
+          (format stream
+                  "~v/ts:rep/~a~v/ts:rep/"
+                   padding-char left
+                   string
+                   padding-char right))
         (let* ((keep (max 0 (- total-size esize)))
                (cut (- ssize keep))
                (sep (round (* keep ratio))))
           (format stream
                   "~v,v/ts:sub/~a~v/ts:sub/"
-                  0 sep string 
+                  0 sep string
                   ellipsis
                   (+ sep cut) string)))))
 
 
+;; (format nil
+;;         "~@{| ~v,v@/ts:fit/ ~}|"
+;;         10 :left "azldkmazkdazlkdamzlkd"
+;;         10 :left "azldkmazkda"
+;;         10 :right "zlkdamzlkd"
+;;         25 :left  "alkdz"
+;;         20 :right "alkmazkdkdamzlkd")
+;;
+;; "| azldkmazk… | azldkmazk… | zlkdamzlkd |                     alkdz | alkmazkdkdamzlkd     |"
